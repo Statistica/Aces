@@ -7,7 +7,7 @@ from collections import Counter
 from time import mktime
 from wordcloud import WordCloud, STOPWORDS
 from scipy.misc import imread
-from collections import Counter
+from operator import itemgetter
 
 def get_ids(access_token):
 	response=requests.get('https://graph.facebook.com/v2.6/%s/feed?access_token=%s' % ('893372457376394', access_token)).json()
@@ -23,17 +23,18 @@ def get_ids(access_token):
 		posts=response['data']
 		for post in posts: #loop through the posts
 			post_ids.append(post['id'])
+
 	return post_ids
 
 def get_posts(access_token, post_ids):
 	posts=[]
 	for post_id in post_ids: #get post and likes for each post
-		post=requests.get('https://graph.facebook.com/v2.6/%s?access_token=%s' % (post_id, access_token)).json()
+		post=requests.get('https://graph.facebook.com/v2.6/%s?fields=from,created_time,message,id&access_token=%s' % (post_id, access_token)).json()
 		likes=requests.get('https://graph.facebook.com/v2.6/%s/likes?summary=true&access_token=%s' % (post_id, access_token)).json()['summary']['total_count']
 		time_created=post['created_time'][:-5] #remove last 5 characters (usually "+0000")
 		time_created=datetime.fromtimestamp(mktime(time.strptime(time_created, '%Y-%m-%dT%H:%M:%S')))
 		try:
-			posts.append({'id': post_id, 'message': post['message'], 'time': time_created, 'likes': likes})
+			posts.append({'id': post_id, 'message': post['message'], 'time': time_created, 'likes': likes, 'author': post['from']['name']})
 		except Exception as e:
 			print post_id + " is not a message post (e.g. event created or group settings changed)"
 	return posts
@@ -61,8 +62,8 @@ def average_likes(posts):
 		if post['likes']==median: #find the median number of likes post
 			print "Median number of likes post: " + post['id']
 	print "Number of posts: " + str(len(posts))
-	print "Total number of likes: " + str(total_likes)
-	print "Average number of likes (mean): " + str(float(total_likes)/len(posts))
+	print "Total number of post likes: " + str(total_likes)
+	print "Average number of post likes (mean): " + str(float(total_likes)/len(posts))
 
 def create_hour_like_heatmap(posts):
 	times=[]
@@ -229,10 +230,67 @@ def average_comments(comment_ids, posts, access_token):
 		if comment['likes']==median: #find the median number of comments post
 			print "Median number of likes comment: " + comment['id']
 	print "Number of comments: " + str(len(comments))
-	print "Total number of likes: " + str(total_likes)
-	print "Average number of likes (mean): " + str(float(total_likes)/len(comments))
+	print "Total number of comment likes: " + str(total_likes)
+	print "Average number of comment likes (mean): " + str(float(total_likes)/len(comments))
 
 	print "There are on average %s comments per post" % (float(len(comments))/len(posts))
+
+	commenter_names=[]
+	for comment_id in comment_ids: #loop through the comment ids
+		comment=requests.get('https://graph.facebook.com/v2.6/%s?access_token=%s' % (comment_id, access_token)).json()
+		commenter_names.append({'id': comment_id, 'author': comment['from']['name']}) #append the number of likes to the comments list
+
+	return commenter_names
+
+def post_stats(posts):
+	c=Counter()
+	for post in posts: #add up each poster's number of posts
+		c[post['author']]+=1
+
+	#assumes at least 3 posters (should fix):
+	print "People with the most posts: 1. %s (%s), 2. %s (%s), 3. %s (%s)" % (c.most_common()[0][0], c.most_common()[0][1], c.most_common()[1][0], c.most_common()[1][1], c.most_common()[2][0], c.most_common()[2][1],)
+												   #c.most_common()[0][0] is most common author's name,
+												   #c.most_common()[0][1] is most common author's number of posts
+
+	date_counter=Counter()
+	for post in posts:
+		date_counter[post['time'].month]+=1
+
+	for i in range(1, 13): #make sure if a month had 0 posts, it's still included in the counter
+		if date_counter[i]==0:
+			date_counter[i]=0
+
+	date_counter=sorted(date_counter.items(), key=itemgetter(0)) #sort the comments by number of likes
+
+	data=[
+		go.Bar(
+			x=["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+			y=[date[1] for date in date_counter]
+		)
+	]
+
+	layout=go.Layout(
+		title="Aces Nation Number Of Posts By Month",
+		xaxis=dict(
+			title="Month"
+		),
+		yaxis=dict(
+			title="# Of Posts"
+		)
+	)
+
+	fig=dict(data=data, layout=layout)
+	plotly.plot(fig)
+
+def comment_stats(comments):
+	c=Counter()
+	for comment in comments: #add up each commenter's number of comments
+		c[comment['author']]+=1
+
+	#assumes at least 3 commenters (should fix):
+	print "People with the most comments: 1. %s (%s), 2. %s (%s), 3. %s (%s)" % (c.most_common()[0][0], c.most_common()[0][1], c.most_common()[1][0], c.most_common()[1][1], c.most_common()[2][0], c.most_common()[2][1],)
+												   #c.most_common()[0][0] is most common author's name,
+												   #c.most_common()[0][1] is most common author's number of comments
 
 access_token="" #obtain from https://developers.facebook.com/tools/explorer/
 post_ids=get_ids(access_token)
@@ -243,4 +301,8 @@ create_hour_like_heatmap(posts)
 create_day_like_heatmap(posts)
 create_day_and_hour_like_heatmap(posts)
 comment_ids=get_comments(post_ids, access_token)
-average_comments(comment_ids, posts, access_token)
+
+post_stats(posts)
+
+commenter_names=average_comments(comment_ids, posts, access_token)
+comment_stats(commenter_names)
